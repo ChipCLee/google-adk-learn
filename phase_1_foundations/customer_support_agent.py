@@ -5,11 +5,13 @@ Demonstrates:
   - Running via InMemoryRunner
   - Asynchronous event streaming with run_async()
   - Multi-turn conversation handling
+  - Sending a camera image with a text question
 """
 
 import asyncio
 import os
 import sys
+from pathlib import Path
 
 try:
     from dotenv import load_dotenv
@@ -152,20 +154,45 @@ async def main():
             pass
 
 
-    # Multi-turn conversation simulation
+    # Each turn contains text and, optionally, a local image attachment.
     conversation_turns = [
-        "Hi, I noticed an unexpected charge of $149 on my monthly invoice for compute services.",
-        "My Account ID is CS-88219, and the invoice number is INV-2026-09.",
-        "Thank you! Could you also check if our API rate limits were exceeded yesterday?"
+        {"text": "Hi, I noticed an unexpected charge of $149 on my monthly invoice for compute services."},
+        {"text": "My Account ID is CS-88219, and the invoice number is INV-2026-09."},
+        {"text": "Thank you! Could you also check if our API rate limits were exceeded yesterday?"},
+        {
+            "text": (
+                "Explain what is visible in this image, including the setting, "
+                "people, and objects. Describe only details you can see."
+            ),
+            "image_path": Path(__file__).resolve().parent.parent
+            / "artifacts" / "camera-20260920-140535.jpg",
+        },
     ]
 
     try:
-        for turn_idx, user_input in enumerate(conversation_turns, start=1):
+        for turn_idx, turn in enumerate(conversation_turns, start=1):
+            user_input = turn["text"]
+            image_path = turn.get("image_path")
             print(f"\n--- Turn {turn_idx} ---")
             print(f"👤 User: {user_input}")
-            print("🤖 Agent Response:")
+            if image_path is not None:
+                print(f"📷 Image: {image_path}")
+                if not ADK_AVAILABLE:
+                    print("[Notice] Image analysis requires live ADK; skipping this turn in simulation mode.")
+                    continue
 
-            msg = types.Content(role="user", parts=[types.Part.from_text(text=user_input)]) if ADK_AVAILABLE else user_input
+            if ADK_AVAILABLE:
+                parts = [types.Part.from_text(text=user_input)]
+                if image_path is not None:
+                    parts.append(types.Part.from_bytes(
+                        data=image_path.read_bytes(),
+                        mime_type="image/jpeg",
+                    ))
+                msg = types.Content(role="user", parts=parts)
+            else:
+                msg = user_input
+
+            print("🤖 Agent Response:")
             run_options = (
                 {"run_config": RunConfig(streaming_mode=StreamingMode.SSE)}
                 if ADK_AVAILABLE else {}
