@@ -1,96 +1,171 @@
 """
 Phase 2: Built-in Tools & Model Context Protocol (MCP) Integration
 Demonstrates:
-  - Using Google ADK built-in tools (e.g., google_search)
-  - Integrating external Model Context Protocol (MCP) servers as agent tools
-  - Architectural pattern for MCP tool registration
+  - Connecting an ADK Agent to a real external MCP Server via McpToolset
+  - Running JSON-RPC 2.0 communication over stdio transport
+  - Combining native ADK Python tools with external MCP tools
+  - Executing live agent queries with Ollama (Gemma 4 on Mac Mini) or Gemini
 """
 
-from typing import Dict, Any, List
+import asyncio
+import os
+import sys
+from pathlib import Path
+from typing import Dict, Any
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
-# Architectural guide & demonstration of Model Context Protocol (MCP) in ADK:
-#
-# MCP allows agents to connect securely to external systems (databases, GitHub,
-# Google Drive, Slack) using standardized JSON-RPC 2.0 messages.
-#
-# In Google ADK, MCP tools are integrated either via:
-# 1. google.adk.tools.mcp (ADK native MCP client)
-# 2. Community MCP wrappers (adk-python-community)
-
-class McpToolAdapter:
-    """Demonstrates how an MCP Server tool is adapted into an ADK Tool."""
-
-    def __init__(self, server_name: str, tool_name: str, schema: dict):
-        self.server_name = server_name
-        self.tool_name = tool_name
-        self.schema = schema
-
-    def __call__(self, **kwargs) -> Dict[str, Any]:
-        """Executes the tool via MCP JSON-RPC protocol."""
-        print(f"  [MCP Client] Forwarding call to server '{self.server_name}' -> tool '{self.tool_name}' with args: {kwargs}")
-        # In a real MCP setup, this sends:
-        # {"jsonrpc": "2.0", "method": "tools/call", "params": {"name": self.tool_name, "arguments": kwargs}}
-        if self.tool_name == "query_sqlite_database":
-            return {
-                "status": "success",
-                "rows": [
-                    {"ticker": "GOOGL", "shares": 150, "avg_cost": 142.10},
-                    {"ticker": "AAPL", "shares": 200, "avg_cost": 180.50},
-                ]
-            }
-        return {"status": "success", "result": f"Executed {self.tool_name} successfully."}
-
-
-def demonstrate_builtin_tools():
-    print("--- 1. Google ADK Built-In Tools ---")
-    print("In ADK, built-in tools are imported directly from `google.adk.tools`:\n")
-    code_sample = '''
 from google.adk.agents import Agent
-from google.adk.tools import google_search
-
-# The agent now has real-time Google Search grounding
-research_agent = Agent(
-    name="web_researcher",
-    model="gemini-2.5-flash",
-    instruction="Use Google Search to answer queries with up-to-date facts.",
-    tools=[google_search]
-)
-
-    '''
-    print(code_sample.strip())
+from google.adk.runners import InMemoryRunner
+from google.adk.tools import McpToolset
+from google.adk.tools.mcp_tool import StdioConnectionParams
+from google.adk.models.lite_llm import LiteLlm
+from google.genai import types
+from mcp import StdioServerParameters
 
 
-def demonstrate_mcp_integration():
-    print("\n--- 2. Model Context Protocol (MCP) Integration ---")
-    print("MCP standardizes how LLM agents interact with tools, filesystems, and databases:\n")
+# =====================================================================
+# Native ADK Tool (Combined with MCP Tools)
+# =====================================================================
 
-    # Simulate an MCP SQLite tool adapter
-    sqlite_mcp_tool = McpToolAdapter(
-        server_name="sqlite_portfolio_server",
-        tool_name="query_sqlite_database",
-        schema={
-            "type": "function",
-            "name": "query_sqlite_database",
-            "description": "Executes a read-only SQL query on the portfolio database.",
-            "parameters": {"sql": {"type": "string", "description": "SQL query"}}
-        }
+def calculate_holding_value(shares: int, current_price: float) -> Dict[str, Any]:
+    """Calculates total position value and profit/loss given share count and price.
+
+    Args:
+        shares: The number of shares owned.
+        current_price: The current market price per share.
+
+    Returns:
+        Dictionary with total market value formatted in USD.
+    """
+    total_val = round(shares * current_price, 2)
+    return {
+        "shares": shares,
+        "current_price": current_price,
+        "total_market_value_usd": total_val
+    }
+
+
+# =====================================================================
+# Agent Definition & Factory
+# =====================================================================
+
+def create_mcp_portfolio_agent(mcp_toolset: McpToolset) -> InMemoryRunner:
+    """Creates a real Google ADK Agent equipped with MCP tools and native tools."""
+    instructions = """
+    You are an intelligent financial portfolio assistant.
+    You have access to:
+    1. An external MCP SQLite database tool (`query_portfolio_database`) for retrieving user holdings.
+    2. A native valuation calculator tool (`calculate_holding_value`) for position pricing.
+
+    Guidelines:
+    - When asked about user holdings or stocks owned, ALWAYS call `query_portfolio_database`.
+    - When computing total position values, use `calculate_holding_value`.
+    - Provide concise, professional, and clear answers (2-3 sentences max).
+    """
+
+    use_gemini = os.getenv("USE_GEMINI", "").lower() in ("1", "true", "yes")
+    gemini_key = os.getenv("GEMINI_API_KEY")
+
+    if use_gemini and gemini_key:
+        print("[Mode] Google ADK with Cloud Gemini (gemini-2.5-flash)")
+        model = "gemini-2.5-flash"
+    else:
+        ollama_host = os.getenv("OLLAMA_HOST", "http://chips-mac-mini.local:11434")
+        api_base = f"{ollama_host}/v1" if not ollama_host.endswith("/v1") else ollama_host
+        ollama_model = os.getenv("OLLAMA_MODEL", "openai/gemma4:e4b")
+        print(f"[Mode] Google ADK with Ollama ({ollama_model} @ {ollama_host})")
+
+        model = LiteLlm(
+            model=ollama_model,
+            api_base=api_base,
+            api_key="ollama"
+        )
+
+    agent = Agent(
+        name="mcp_portfolio_agent",
+        model=model,
+        instruction=instructions,
+        tools=[mcp_toolset, calculate_holding_value]
     )
 
-    print("Created MCP Tool Adapter: 'query_sqlite_database'")
-    print("Simulating agent invocation of MCP tool...")
-    result = sqlite_mcp_tool(sql="SELECT ticker, shares, avg_cost FROM portfolio WHERE shares > 0;")
-    print(f"Tool Output received by Agent:\n  {result}")
+    return InMemoryRunner(agent=agent, app_name="mcp_portfolio_app")
 
 
-def main():
+# =====================================================================
+# Main Execution
+# =====================================================================
+
+async def main():
     print("=" * 70)
-    print("Phase 2: Built-in Tools & MCP Protocol Demonstration")
+    print("Phase 2: Live Model Context Protocol (MCP) Agent Demonstration")
     print("=" * 70)
-    demonstrate_builtin_tools()
-    demonstrate_mcp_integration()
+
+    # Resolve path to the real MCP Server script
+    server_script = Path(__file__).parent / "portfolio_mcp_server.py"
+    print(f"\n[MCP] Connecting to external MCP Server: {server_script.name}")
+
+    # Configure real ADK McpToolset connecting over stdio
+    connection_params = StdioConnectionParams(
+        server_params=StdioServerParameters(
+            command=sys.executable,
+            args=[str(server_script)]
+        )
+    )
+    mcp_toolset = McpToolset(connection_params=connection_params)
+
+    # Discover and inspect registered tools from the MCP Server
+    tools = await mcp_toolset.get_tools()
+    print(f"[MCP] Successfully connected via JSON-RPC 2.0. Discovered MCP Tools:")
+    for t in tools:
+        print(f"  • {t.name}: {t.description}")
+
+    runner = create_mcp_portfolio_agent(mcp_toolset)
+    user_id = "user_investor_501"
+    session_id = "session_mcp_001"
+
+    await runner.session_service.create_session(
+        user_id=user_id,
+        session_id=session_id,
+        app_name="mcp_portfolio_app"
+    )
+
+    queries = [
+        "What stock holdings do I currently own in my portfolio database?",
+        "I have 150 shares of GOOGL and current market price is $182.50. What is my total position value?"
+    ]
+
+    try:
+        for turn_idx, query in enumerate(queries, start=1):
+            print(f"\n--- Turn {turn_idx} ---")
+            print(f"👤 User: \"{query}\"")
+            msg = types.Content(role="user", parts=[types.Part.from_text(text=query)])
+
+            async for event in runner.run_async(user_id=user_id, session_id=session_id, new_message=msg):
+                if hasattr(event, "content") and event.content:
+                    for part in getattr(event.content, "parts", []):
+                        if getattr(part, "function_call", None):
+                            call = part.function_call
+                            print(f"  ⚙️  Tool Executed: {call.name}({call.args})")
+                        elif getattr(part, "function_response", None):
+                            res = part.function_response
+                            print(f"  📥 Tool Result: {res.name} -> {res.response.get('result', res.response)}")
+                        elif getattr(part, "text", None) and not getattr(part, "thought", False):
+                            print(f"  🤖 Agent: {part.text.strip()}")
+
+    finally:
+        # Clean up MCP connection resources
+        print("\n[MCP] Closing MCP Server connection...")
+        await mcp_toolset.close()
+
     print("\n" + "=" * 70)
+    print("Phase 2 MCP Live Agent Demo Complete.")
+    print("=" * 70)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

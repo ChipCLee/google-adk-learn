@@ -1,15 +1,15 @@
 """
 Phase 2: Financial Market Intelligence & Portfolio Agent
 Demonstrates:
-  - Defining custom Python functions as tools with docstrings and type hints
-  - Using ToolContext to read and modify session state from inside a tool
-  - Multi-step tool execution loop
-  - Dynamic calculations and state persistence
+  - Real Google ADK Agent with custom Python tools
+  - ToolContext for state-aware tools (reading & modifying session state)
+  - Multi-step tool execution loop with live LLM (Gemma 4 on Mac Mini / Gemini)
+  - Persistence across turns within a session
 """
 
 import asyncio
 import os
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 try:
     from dotenv import load_dotenv
@@ -17,23 +17,18 @@ try:
 except ImportError:
     pass
 
-try:
-    from google.adk.agents import Agent
-    from google.adk.runners import InMemoryRunner
-    from google.adk.tools import ToolContext
-    ADK_AVAILABLE = bool(os.getenv("GEMINI_API_KEY"))
-except ImportError:
-    ADK_AVAILABLE = False
-
-
+from google.adk.agents import Agent
+from google.adk.runners import InMemoryRunner
+from google.adk.tools import ToolContext
+from google.adk.models.lite_llm import LiteLlm
+from google.genai import types
 
 
 # =====================================================================
-# Tool Definitions (Standard Python functions with Google-style docstrings)
+# Financial Registry & Tools
 # =====================================================================
 
-# Mock financial database
-MOCK_MARKET_DATA = {
+MARKET_DATA = {
     "GOOGL": {"price": 182.50, "currency": "USD", "market_cap_b": 2250, "net_income_b": 88.0, "52w_high": 191.0, "52w_low": 130.0},
     "MSFT": {"price": 448.20, "currency": "USD", "market_cap_b": 3330, "net_income_b": 88.1, "52w_high": 468.0, "52w_low": 309.0},
     "AAPL": {"price": 225.00, "currency": "USD", "market_cap_b": 3450, "net_income_b": 100.5, "52w_high": 237.0, "52w_low": 164.0},
@@ -50,7 +45,7 @@ def get_stock_quote(ticker: str) -> Dict[str, Any]:
         A dictionary containing price, currency, market cap, and 52-week range.
     """
     ticker_upper = ticker.strip().upper()
-    data = MOCK_MARKET_DATA.get(ticker_upper)
+    data = MARKET_DATA.get(ticker_upper)
     if not data:
         return {"error": f"Ticker '{ticker_upper}' not found in market registry."}
     return {
@@ -67,13 +62,13 @@ def calculate_pe_ratio(ticker: str) -> Dict[str, Any]:
     """Calculates the Price-to-Earnings (P/E) valuation ratio for a given stock.
 
     Args:
-        ticker: The stock ticker symbol (e.g., GOOGL, MSFT).
+        ticker: The stock ticker symbol (e.g., GOOGL, MSFT, AAPL).
 
     Returns:
         A dictionary containing the calculated P/E ratio and valuation category.
     """
     ticker_upper = ticker.strip().upper()
-    data = MOCK_MARKET_DATA.get(ticker_upper)
+    data = MARKET_DATA.get(ticker_upper)
     if not data:
         return {"error": f"Ticker '{ticker_upper}' not found."}
 
@@ -87,7 +82,7 @@ def calculate_pe_ratio(ticker: str) -> Dict[str, Any]:
     }
 
 
-def manage_watchlist(action: str, ticker: str, tool_context: Any = None) -> Dict[str, Any]:
+def manage_watchlist(action: str, ticker: str = "", tool_context: ToolContext = None) -> Dict[str, Any]:
     """Manages the user's active stock watchlist stored in session state.
 
     Args:
@@ -99,20 +94,20 @@ def manage_watchlist(action: str, ticker: str, tool_context: Any = None) -> Dict
         The updated watchlist and status message.
     """
     ticker_upper = ticker.strip().upper() if ticker else ""
-    
-    # State handling via ToolContext (or mock state object)
     state = getattr(tool_context, "state", {}) if tool_context else {}
-    watchlist = state.setdefault("watchlist", ["GOOGL"])  # default starter
+    watchlist = list(state.get("watchlist", ["GOOGL"]))
 
     if action.lower() == "add":
         if ticker_upper and ticker_upper not in watchlist:
             watchlist.append(ticker_upper)
+            state["watchlist"] = watchlist
             return {"status": "success", "message": f"Added {ticker_upper} to watchlist.", "watchlist": watchlist}
         return {"status": "noop", "message": f"{ticker_upper} is already in watchlist.", "watchlist": watchlist}
 
     elif action.lower() == "remove":
         if ticker_upper in watchlist:
             watchlist.remove(ticker_upper)
+            state["watchlist"] = watchlist
             return {"status": "success", "message": f"Removed {ticker_upper} from watchlist.", "watchlist": watchlist}
         return {"status": "error", "message": f"{ticker_upper} not in watchlist.", "watchlist": watchlist}
 
@@ -123,53 +118,44 @@ def manage_watchlist(action: str, ticker: str, tool_context: Any = None) -> Dict
 
 
 # =====================================================================
-# Simulation Runner for Offline Demonstration
+# Agent Definition & Factory
 # =====================================================================
-class MockToolContext:
-    def __init__(self, state: dict):
-        self.state = state
+def create_financial_research_agent() -> InMemoryRunner:
+    """Creates the Financial Intelligence Agent with state-aware market tools."""
+    instructions = """
+    You are an elite equity research and portfolio assistant.
+    Your responsibilities:
+    1. Use your available tools to retrieve stock quotes, compute P/E ratios, and manage the user's watchlist.
+    2. Always synthesize tool results into clear, concise, and analytical commentary (2 to 3 sentences maximum).
+    3. After executing a tool, confirm the action or data directly to the user.
+    """
 
+    use_gemini = os.getenv("USE_GEMINI", "").lower() in ("1", "true", "yes")
+    gemini_key = os.getenv("GEMINI_API_KEY")
 
-class SimulatedToolRunner:
-    def __init__(self):
-        self.state = {"watchlist": ["GOOGL"]}
-        self.tools = {
-            "get_stock_quote": get_stock_quote,
-            "calculate_pe_ratio": calculate_pe_ratio,
-            "manage_watchlist": manage_watchlist,
-        }
+    if use_gemini and gemini_key:
+        print("[Mode] Google ADK with Cloud Gemini (gemini-2.5-flash)")
+        model = "gemini-2.5-flash"
+    else:
+        ollama_host = os.getenv("OLLAMA_HOST", "http://chips-mac-mini.local:11434")
+        api_base = f"{ollama_host}/v1" if not ollama_host.endswith("/v1") else ollama_host
+        ollama_model = os.getenv("OLLAMA_MODEL", "openai/gemma4:e4b")
+        print(f"[Mode] Google ADK with Ollama ({ollama_model} @ {ollama_host})")
 
-    async def run_turn(self, query: str):
-        print(f"\n👤 User Query: \"{query}\"")
-        ctx = MockToolContext(self.state)
+        model = LiteLlm(
+            model=ollama_model,
+            api_base=api_base,
+            api_key="ollama"
+        )
 
-        # Simulate agent reasoning and tool invocation
-        q = query.lower()
-        if "pe ratio" in q or "p/e" in q or "valuation" in q:
-            ticker = "MSFT" if "msft" in q else "GOOGL"
-            print(f"  🤖 Agent calls tool: calculate_pe_ratio(ticker='{ticker}')")
-            res = calculate_pe_ratio(ticker)
-            print(f"  ⚙️  Tool Result: {res}")
-            print(f"  🤖 Agent Response: {ticker} has a P/E ratio of {res['pe_ratio']} ({res['category']} valuation based on {res['formula']}).")
+    agent = Agent(
+        name="financial_intelligence_agent",
+        model=model,
+        instruction=instructions,
+        tools=[get_stock_quote, calculate_pe_ratio, manage_watchlist]
+    )
 
-        elif "add" in q and "watchlist" in q:
-            ticker = "AAPL" if "aapl" in q else "MSFT"
-            print(f"  🤖 Agent calls tool: manage_watchlist(action='add', ticker='{ticker}')")
-            res = manage_watchlist(action="add", ticker=ticker, tool_context=ctx)
-            print(f"  ⚙️  Tool Result: {res}")
-            print(f"  🤖 Agent Response: Successfully added {ticker} to your watchlist. Your current watchlist is now: {res['watchlist']}")
-
-        elif "quote" in q or "price" in q:
-            ticker = "GOOGL" if "googl" in q else "AAPL"
-            print(f"  🤖 Agent calls tool: get_stock_quote(ticker='{ticker}')")
-            res = get_stock_quote(ticker)
-            print(f"  ⚙️  Tool Result: {res}")
-            print(f"  🤖 Agent Response: {ticker} is trading at ${res['price']} {res['currency']} with a market cap of ${res['market_cap_billions']}B (52w range: ${res['52w_low']} - ${res['52w_high']}).")
-
-        elif "watchlist" in q:
-            res = manage_watchlist(action="view", ticker="", tool_context=ctx)
-            print(f"  ⚙️  Tool Result: {res}")
-            print(f"  🤖 Agent Response: Here is your current watchlist: {res['watchlist']}.")
+    return InMemoryRunner(agent=agent, app_name="financial_app")
 
 
 # =====================================================================
@@ -177,73 +163,63 @@ class SimulatedToolRunner:
 # =====================================================================
 async def main():
     print("=" * 70)
-    print("Phase 2: Financial Market Intelligence Agent with Tools & ToolContext")
+    print("Phase 2: Financial Market Intelligence Agent with Live Tools")
     print("=" * 70)
 
-    if ADK_AVAILABLE:
-        from google.genai import types
-        print("[Mode] Live Google ADK")
-        agent = Agent(
-            name="financial_intelligence_agent",
-            model="gemini-2.5-flash",
-            instruction="""
-            You are an elite equity research assistant.
-            Use your available tools to retrieve stock quotes, compute P/E ratios, and manage the user's watchlist.
-            Always synthesize tool results into clear, analytical commentary.
-            """,
-            tools=[get_stock_quote, calculate_pe_ratio, manage_watchlist]
-        )
-        runner = InMemoryRunner(agent=agent, app_name="financial_app")
-        user_id, session_id = "user_corp_892", "session_financial_001"
-        try:
-            await runner.session_service.create_session(user_id=user_id, session_id=session_id, app_name="financial_app")
-        except Exception:
-            pass
+    runner = create_financial_research_agent()
+    user_id = "user_corp_892"
+    session_id = "session_financial_001"
 
+    # Initialize session state with a starter watchlist
+    initial_state = {"watchlist": ["GOOGL"]}
+    print(f"Initial Session State: Watchlist={initial_state['watchlist']}")
+    await runner.session_service.create_session(
+        user_id=user_id,
+        session_id=session_id,
+        app_name="financial_app",
+        state=initial_state
+    )
 
-        queries = [
-            "What is the current stock quote for GOOGL?",
-            "What is the P/E ratio and valuation of MSFT?",
-            "Can you add AAPL to my watchlist?",
-            "Show me what's on my watchlist right now."
-        ]
-        try:
-            for q in queries:
+    queries = [
+        "What is the current stock quote for GOOGL?",
+        "What is the P/E ratio and valuation of MSFT?",
+        "Can you add AAPL to my watchlist?",
+        "Show me what's on my watchlist right now."
+    ]
 
+    for turn_idx, q in enumerate(queries, start=1):
+        print(f"\n--- Turn {turn_idx} ---")
+        print(f"👤 User: \"{q}\"")
+        msg = types.Content(role="user", parts=[types.Part.from_text(text=q)])
 
-                print(f"\n👤 User Query: \"{q}\"")
-                msg = types.Content(role="user", parts=[types.Part.from_text(text=q)])
-                async for event in runner.run_async(user_id=user_id, session_id=session_id, new_message=msg):
-                    if hasattr(event, "content") and event.content:
-                        if hasattr(event.content, "parts") and event.content.parts:
-                            for part in event.content.parts:
-                                if hasattr(part, "text") and part.text:
-                                    print(f"  🤖 Agent Response: {part.text}")
-                        elif isinstance(event.content, str):
-                            print(f"  🤖 Agent Response: {event.content}")
-                await asyncio.sleep(1)
-        except Exception as e:
-            if "RESOURCE_EXHAUSTED" in str(e) or "429" in str(e):
-                print(f"\n⚠️ [Notice] Gemini Free Tier rate limit reached (5 requests/min). Switching to Simulation Mode.")
-                sim = SimulatedToolRunner()
-                await sim.run_turn("What is the current stock quote for GOOGL?")
-                await sim.run_turn("What is the P/E ratio and valuation of MSFT?")
-                await sim.run_turn("Can you add AAPL to my watchlist?")
-                await sim.run_turn("Show me what's on my watchlist right now.")
-            else:
-                raise e
+        async for event in runner.run_async(user_id=user_id, session_id=session_id, new_message=msg):
+            if hasattr(event, "content") and event.content:
+                for part in getattr(event.content, "parts", []):
+                    # Tool call
+                    if getattr(part, "function_call", None):
+                        call = part.function_call
+                        print(f"  ⚙️  Tool Executed: {call.name}({call.args})")
+                    # Tool response
+                    elif getattr(part, "function_response", None):
+                        res = part.function_response
+                        print(f"  📥 Tool Result: {res.name} -> {res.response.get('result', res.response)}")
+                    # Agent verbal response (excluding internal thought)
+                    elif getattr(part, "text", None):
+                        if not getattr(part, "thought", False):
+                            print(f"  🤖 Agent: {part.text.strip()}")
 
-    else:
-        print("[Mode] Simulation Mode (google-adk not installed or GEMINI_API_KEY missing)")
-        sim = SimulatedToolRunner()
-        await sim.run_turn("What is the current stock quote for GOOGL?")
-        await sim.run_turn("What is the P/E ratio and valuation of MSFT?")
-        await sim.run_turn("Can you add AAPL to my watchlist?")
-        await sim.run_turn("Show me what's on my watchlist right now.")
-
+    # Retrieve and inspect persisted session state
+    session = await runner.session_service.get_session(
+        user_id=user_id,
+        session_id=session_id,
+        app_name="financial_app"
+    )
+    print("\nFinal Mutated Session State (persisted in runner.session_service):")
+    for k, v in session.state.items():
+        print(f"  {k}: {v}")
 
     print("\n" + "=" * 70)
-    print("Phase 2 Demo Complete.")
+    print("Phase 2 Live Tools Demo Complete.")
     print("=" * 70)
 
 
