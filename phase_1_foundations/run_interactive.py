@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from customer_support_agent import create_customer_support_agent, ADK_AVAILABLE
 
 try:
+    from google.adk.agents.run_config import RunConfig, StreamingMode
     from google.genai import types
 except ImportError:
     types = None
@@ -36,7 +37,8 @@ async def interactive_session():
 
     while True:
         try:
-            user_msg = input("\n👤 You: ").strip()
+            # Keep the event loop free for background logging while waiting.
+            user_msg = (await asyncio.to_thread(input, "\n👤 You: ")).strip()
             if not user_msg:
                 continue
             if user_msg.lower() in ("exit", "quit", "q"):
@@ -46,19 +48,29 @@ async def interactive_session():
             print("🤖 Agent: ", end="", flush=True)
 
             msg = types.Content(role="user", parts=[types.Part.from_text(text=user_msg)]) if (ADK_AVAILABLE and types) else user_msg
+            run_options = (
+                {"run_config": RunConfig(streaming_mode=StreamingMode.SSE)}
+                if ADK_AVAILABLE else {}
+            )
 
             async for event in runner.run_async(
                 user_id=user_id,
                 session_id=session_id,
-                new_message=msg
+                new_message=msg,
+                **run_options,
             ):
                 if hasattr(event, "content") and event.content:
                     if hasattr(event.content, "parts") and event.content.parts:
+                        # Print streaming chunks only, not the final duplicate.
+                        if not event.partial:
+                            continue
                         for part in event.content.parts:
-                            if hasattr(part, "text") and part.text:
-                                print(f"\n{part.text}")
+                            if part.text and not part.thought:
+                                print(part.text, end="", flush=True)
                     elif isinstance(event.content, str):
                         print(f"\n{event.content}")
+            if ADK_AVAILABLE:
+                print()
         except (KeyboardInterrupt, EOFError):
             print("\nSession interrupted. Goodbye!")
             break
@@ -66,4 +78,3 @@ async def interactive_session():
 
 if __name__ == "__main__":
     asyncio.run(interactive_session())
-

@@ -20,6 +20,7 @@ except ImportError:
 # Attempt to import from google.adk; provide a self-contained fallback for offline learning
 try:
     from google.adk.agents import Agent
+    from google.adk.agents.run_config import RunConfig, StreamingMode
     from google.adk.runners import InMemoryRunner
     from google.adk.models.lite_llm import LiteLlm
     from google.genai import types
@@ -165,19 +166,30 @@ async def main():
             print("🤖 Agent Response:")
 
             msg = types.Content(role="user", parts=[types.Part.from_text(text=user_input)]) if ADK_AVAILABLE else user_input
+            run_options = (
+                {"run_config": RunConfig(streaming_mode=StreamingMode.SSE)}
+                if ADK_AVAILABLE else {}
+            )
 
             async for event in runner.run_async(
                 user_id=user_id,
                 session_id=session_id,
-                new_message=msg
+                new_message=msg,
+                **run_options,
             ):
                 if hasattr(event, "content") and event.content:
                     if hasattr(event.content, "parts") and event.content.parts:
+                        # ADK also emits a final combined response; skip it to
+                        # avoid printing the streamed text a second time.
+                        if not event.partial:
+                            continue
                         for part in event.content.parts:
-                            if hasattr(part, "text") and part.text:
-                                print(f"  {part.text}")
+                            if part.text and not part.thought:
+                                print(part.text, end="", flush=True)
                     elif isinstance(event.content, str):
                         print(f"  {event.content}")
+            if ADK_AVAILABLE:
+                print()
     except Exception as e:
         if "RESOURCE_EXHAUSTED" in str(e) or "429" in str(e):
             print(f"\n⚠️ [Notice] Gemini Free Tier rate limit reached (5 requests/min). Displaying simulated responses.")
