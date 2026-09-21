@@ -16,6 +16,9 @@ echo "Region:   ${REGION}"
 echo "Service:  ${SERVICE_NAME}"
 echo "======================================================="
 
+: "${OLLAMA_HOST:?Set OLLAMA_HOST to an endpoint reachable from Cloud Run}"
+: "${OLLAMA_MODEL:?Set OLLAMA_MODEL to your Gemma model}"
+
 # 1. Build container image using Google Cloud Build
 echo "==> Step 1: Building container image with Cloud Build..."
 gcloud builds submit --tag "${IMAGE_TAG}" .
@@ -27,8 +30,7 @@ gcloud run deploy "${SERVICE_NAME}" \
     --platform managed \
     --region "${REGION}" \
     --allow-unauthenticated \
-    --set-env-vars "ADK_ENV=production" \
-    --set-secrets "GEMINI_API_KEY=GEMINI_API_KEY:latest" \
+    --set-env-vars "ADK_ENV=production,OLLAMA_HOST=${OLLAMA_HOST},OLLAMA_MODEL=${OLLAMA_MODEL}" \
     --memory 1Gi \
     --cpu 1 \
     --min-instances 0 \

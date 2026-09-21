@@ -72,6 +72,8 @@ In this phase, we build an **Enterprise Site Reliability Engineering (SRE) Incid
 
 ## 🚀 Running the Code
 
+The main agent demo uses `OLLAMA_HOST` and `OLLAMA_MODEL` from the repository-root `.env` through `llm_config.py`. No Gemini API key is required. Standalone deterministic examples do not call an LLM.
+
 ### 1. Run the Full Incident Remediation Workflow
 ```bash
 python phase_5_workflows_and_hitl/incident_remediation_workflow.py

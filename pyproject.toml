@@ -5,7 +5,7 @@ description = "Comprehensive curriculum and examples for Google Agent Developmen
 requires-python = ">=3.10"
 dependencies = [
     "aiohttp>=3.9.0",
-    "google-adk>=0.1.0",
+    "google-adk[mcp]>=0.1.0",
     "google-genai>=0.1.0",
     "litellm>=1.101.0",
     "mcp>=2.2.0",

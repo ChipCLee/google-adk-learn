@@ -1,5 +1,5 @@
 # Core ADK and Gemini SDK
-google-adk>=0.1.0
+google-adk[mcp]>=0.1.0
 google-genai>=0.1.0
 
 # Ollama integration and image attachments

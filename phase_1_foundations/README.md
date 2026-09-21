@@ -20,7 +20,7 @@ sequenceDiagram
     participant User
     participant Runner as InMemoryRunner
     participant Agent as LlmAgent
-    participant LLM as Gemini Model (e.g. gemini-2.0-flash)
+    participant LLM as Gemma via Ollama (.env)
 
     User->>Runner: run_async(user_id, session_id, message)
     Runner->>Agent: Invoke with Session Context
@@ -34,10 +34,11 @@ sequenceDiagram
 In ADK, defining an agent is purely declarative in Python:
 ```python
 from google.adk.agents import Agent
+from llm_config import create_model
 
 agent = Agent(
     name="customer_support_agent",
-    model="gemini-2.0-flash",
+    model=create_model(),
     instruction="""
     You are a professional customer support specialist for CloudFlow SaaS.
     Your objective is to:
@@ -81,6 +82,8 @@ In this phase, we implement an enterprise **Customer Support Triage & FAQ Agent*
 ---
 
 ## 🚀 Running the Code
+
+The main agent demo uses `OLLAMA_HOST` and `OLLAMA_MODEL` from the repository-root `.env` through `llm_config.py`. No Gemini API key is required. Standalone deterministic examples do not call an LLM.
 
 ### 1. Run the Automated Demo
 ```bash

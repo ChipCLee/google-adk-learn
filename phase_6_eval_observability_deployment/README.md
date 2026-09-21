@@ -62,6 +62,8 @@ In this phase, we build and deploy an **Enterprise Contract Compliance Auditor**
 
 ## 🚀 Running the Code
 
+The main agent demo uses `OLLAMA_HOST` and `OLLAMA_MODEL` from the repository-root `.env` through `llm_config.py`. No Gemini API key is required. Standalone deterministic examples do not call an LLM.
+
 ### 1. Run the Evaluation Benchmark Suite
 ```bash
 python phase_6_eval_observability_deployment/eval_suite.py
@@ -75,7 +77,7 @@ python phase_6_eval_observability_deployment/telemetry_and_monitoring.py
 ### 3. Build & Deploy Container
 ```bash
 # Build Docker image
-docker build -t gcr.io/my-project/adk-contract-agent:v1 phase_6_eval_observability_deployment/
+docker build -f phase_6_eval_observability_deployment/Dockerfile -t gcr.io/my-project/adk-contract-agent:v1 .
 
 # Review deployment script
 cat phase_6_eval_observability_deployment/deploy_cloud_run.sh

@@ -66,6 +66,8 @@ In this phase, we build a **Personalized Health & Wellness Coach Agent** (*FitPu
 
 ## 🚀 Running the Code
 
+The main agent demo uses `OLLAMA_HOST` and `OLLAMA_MODEL` from the repository-root `.env` through `llm_config.py`. No Gemini API key is required. Standalone deterministic examples do not call an LLM.
+
 ### 1. Run the Wellness Coach Agent (Session State)
 ```bash
 python phase_3_sessions_and_memory/wellness_coach_agent.py

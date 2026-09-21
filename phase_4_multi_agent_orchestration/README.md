@@ -44,20 +44,23 @@ graph TD
 You pass specialized agents directly to the parent's `sub_agents` argument. The parent model reads each sub-agent's description and instruction to decide when and to whom to route the task:
 ```python
 from google.adk.agents import Agent
+from llm_config import create_model
 
 backend_agent = Agent(
     name="backend_engineer",
+    model=create_model(),
     instruction="You specialize in Python, FastAPI, and database schemas."
 )
 
 frontend_agent = Agent(
     name="frontend_engineer",
+    model=create_model(),
     instruction="You specialize in React, TypeScript, and Tailwind CSS."
 )
 
 lead_agent = Agent(
     name="lead_architect",
-    model="gemini-2.0-flash",
+    model=create_model(),
     instruction="Coordinate user feature requests across backend and frontend engineers.",
     sub_agents=[backend_agent, frontend_agent]
 )
@@ -84,6 +87,8 @@ In this phase, we build an **Autonomous Software Engineering Team** consisting o
 ---
 
 ## 🚀 Running the Code
+
+The main agent demo uses `OLLAMA_HOST` and `OLLAMA_MODEL` from the repository-root `.env` through `llm_config.py`. No Gemini API key is required. Standalone deterministic examples do not call an LLM.
 
 ### 1. Run the Multi-Agent Software Team
 ```bash

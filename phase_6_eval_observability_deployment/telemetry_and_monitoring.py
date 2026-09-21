@@ -8,8 +8,15 @@ Demonstrates:
 
 import time
 import json
+import asyncio
+import sys
+from pathlib import Path
 from datetime import datetime, timezone
 from typing import List, Dict, Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from llm_config import ADK_AVAILABLE, ask_agent, model_description, model_settings
+from phase_6_eval_observability_deployment.eval_suite import verify_governing_law
 
 
 class TelemetryCollector:
@@ -54,34 +61,45 @@ class TelemetryCollector:
         return json.dumps(payload, indent=2)
 
 
-def main():
+async def main():
     print("=" * 75)
     print("Phase 6: Agent Telemetry & OpenTelemetry Tracing Demonstration")
     print("=" * 75)
 
     collector = TelemetryCollector("adk-contract-compliance-service")
+    print(f"[Mode] Live Ollama telemetry ({model_description()})"
+          if ADK_AVAILABLE else "[Mode] Offline telemetry simulation")
 
     # Trace 1: Root Agent Invocation
     root_span = collector.start_span("Runner.run_async")
 
     # Trace 2: LLM Model Generation
-    llm_span = collector.start_span("Gemini.generate_content", parent_span_id=root_span)
-    time.sleep(0.15)  # simulate LLM latency
+    llm_span = collector.start_span("Ollama.chat", parent_span_id=root_span)
+    if ADK_AVAILABLE:
+        result = await ask_agent(
+            name="telemetry_demo",
+            instruction="Summarize the supplied fictional contract in one sentence. Do not make a legal recommendation.",
+            prompt="Mutual NDA with a two-year term and Delaware governing law.",
+        )
+        print(result["text"])
+    else:
+        await asyncio.sleep(0.15)
+        result = {"tokens_used": 480}
     collector.end_span(llm_span, attributes={
-        "model": "gemini-2.5-flash",
-        "prompt_tokens": 412,
-        "completion_tokens": 68,
-        "total_tokens": 480
+        "model": model_settings()[0],
+        "server.address": model_settings()[1],
+        "simulated": not ADK_AVAILABLE,
+        "total_tokens": result["tokens_used"],
     })
 
 
     # Trace 3: Tool Call Execution
     tool_span = collector.start_span("Tool.verify_governing_law", parent_span_id=root_span)
-    time.sleep(0.05)  # simulate tool execution
+    tool_result = verify_governing_law("Mutual NDA with Delaware governing law.")
     collector.end_span(tool_span, attributes={
         "tool.name": "verify_governing_law",
-        "tool.arguments": {"jurisdiction": "Delaware"},
-        "tool.status": "success"
+        "tool.arguments": {"contract_text": "Mutual NDA with Delaware governing law."},
+        "tool.status": tool_result["status"],
     })
 
     # End Root Span
@@ -96,4 +114,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

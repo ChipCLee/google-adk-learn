@@ -9,7 +9,13 @@ Demonstrates:
 """
 
 import asyncio
+import json
+import sys
+from pathlib import Path
 from typing import Dict, Any, List
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from llm_config import ADK_AVAILABLE, ask_agent, model_description
 
 
 class IncidentWorkflowEngine:
@@ -39,6 +45,27 @@ class IncidentWorkflowEngine:
             "recommended_action": "rolling_restart",
             "action_risk_level": "HIGH"  # Triggers HITL
         }
+        if ADK_AVAILABLE:
+            from pydantic import BaseModel
+            from typing import Literal
+
+            class Diagnosis(BaseModel):
+                root_cause: str
+                affected_pods: list[str]
+                severity_score: float
+                recommended_action: Literal["rolling_restart"]
+                action_risk_level: Literal["HIGH"]
+
+            result = await ask_agent(
+                name="incident_diagnostician",
+                instruction=(
+                    "Diagnose this simulated incident using only the supplied telemetry. "
+                    "Suggest a rolling restart, which is HIGH risk and requires approval. "
+                    "Return the structured diagnosis. Do not execute any actions."
+                ),
+                prompt=json.dumps(alert), output_schema=Diagnosis,
+            )
+            diagnosis = Diagnosis.model_validate_json(result["text"]).model_dump()
         self.state["diagnosis"] = diagnosis
         print(f"  📋 Diagnosis: {diagnosis['root_cause']}")
         print(f"  ⚠️  Risk Level: {diagnosis['action_risk_level']}")
@@ -84,6 +111,13 @@ class IncidentWorkflowEngine:
             "======================================================="
         )
         print(report)
+        if ADK_AVAILABLE:
+            result = await ask_agent(
+                name="postmortem_writer",
+                instruction="Summarize this simulated incident in three sentences using only the supplied facts. Label any proposed prevention as a recommendation.",
+                prompt=json.dumps(self.state),
+            )
+            print("Model summary:", result["text"])
 
 
 async def main():
@@ -92,12 +126,16 @@ async def main():
     print("=" * 70)
 
     engine = IncidentWorkflowEngine()
+    print(f"[Mode] Live Ollama reasoning ({model_description()}); remediation and approval remain simulated."
+          if ADK_AVAILABLE else "[Mode] Offline workflow simulation")
 
     # Step 1: Alert Ingest
     await engine.step_ingest_alert({
         "service": "billing-service-prod",
         "severity": "CRITICAL",
-        "metric": "MemoryUtilization > 92%"
+        "metric": "MemoryUtilization > 92%",
+        "logs": "memory-cache-v2 grows without eviction; containers terminated with OOMKilled",
+        "affected_pods": ["billing-pod-89a", "billing-pod-89b"],
     })
 
     # Step 2: Diagnostic Agent

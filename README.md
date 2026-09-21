@@ -12,7 +12,7 @@ The curriculum is structured into 6 progressive phases, each containing:
 - In-depth architectural documentation (`README.md`)
 - Production-ready, runnable Python code
 - Real-world enterprise use cases
-- Both live Gemini execution and offline simulation modes
+- Live Gemma execution through Ollama and offline simulation modes
 
 ```
 google-adk/
@@ -71,6 +71,10 @@ cd google-adk
 # Install dependencies and sync environment with uv
 uv sync
 
+# Configure the shared Ollama endpoint and model
+cp .env.example .env
+# Edit OLLAMA_HOST and OLLAMA_MODEL in .env
+
 # Run any script with uv
 uv run python phase_1_foundations/customer_support_agent.py
 
@@ -89,7 +93,7 @@ pip install -r requirements.txt
 
 # Configure environment variables
 cp .env.example .env
-# Edit .env and paste your GEMINI_API_KEY
+# Edit .env: set OLLAMA_HOST and OLLAMA_MODEL for your Ollama server
 ```
 
 ---
@@ -109,6 +113,18 @@ cp .env.example .env
 
 ## 💡 Dual Execution Modes (Live & Offline Simulation)
 
-Every Python example in this repository is built with **dual execution support**:
-1. **Live Mode**: If `GEMINI_API_KEY` is set and `google-adk` is installed, it connects to Gemini models (`gemini-2.0-flash`) in real-time.
-2. **Simulation / Fallback Mode**: If running in an offline environment or without credentials, each script demonstrates full execution flows, state mutations, and event traces via mock adapters, allowing you to learn the exact lifecycle without API keys.
+The main agent demos in all six phases use `llm_config.py`, which loads the repository-root `.env` regardless of your working directory:
+
+```dotenv
+OLLAMA_HOST=http://10.127.50.41:11434
+OLLAMA_MODEL=ollama/gemma4:26b
+```
+
+Shell environment variables take precedence. `OLLAMA_MODEL` accepts `ollama/gemma4:26b`, `ollama_chat/gemma4:26b`, or `gemma4:26b`; the adapter uses Ollama's chat endpoint for native tools and images. No Gemini API key is required.
+
+1. **Live mode:** With `google-adk` and `litellm` installed, each main demo calls the configured Ollama model. Phase 6 reports actual model token usage and request latency.
+2. **Offline mode:** If those dependencies are unavailable, the scripts use their deterministic simulations. An unreachable Ollama server is reported as an error rather than silently treated as a successful model response.
+
+The standalone memory-store, routing, MCP-adapter, and approval-gate examples illustrate deterministic mechanics without LLM calls. Phase 5 uses Gemma for diagnosis and summarization, while approval and remediation remain simulated. Phase 6's small benchmark is educational, not production certification.
+
+For Cloud Run, the deployment environment must supply `OLLAMA_HOST` and `OLLAMA_MODEL`, and the service must have network access to that endpoint. A private LAN address such as `chip` is not automatically reachable from Cloud Run.

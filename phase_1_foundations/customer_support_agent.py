@@ -9,24 +9,19 @@ Demonstrates:
 """
 
 import asyncio
-import os
 import sys
 from pathlib import Path
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
+# Keep direct execution (python phase_N/script.py) working from any directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from llm_config import ADK_AVAILABLE, create_model, model_description, model_settings
 
 # Attempt to import from google.adk; provide a self-contained fallback for offline learning
 try:
     from google.adk.agents import Agent
     from google.adk.agents.run_config import RunConfig, StreamingMode
     from google.adk.runners import InMemoryRunner
-    from google.adk.models.lite_llm import LiteLlm
     from google.genai import types
-    ADK_AVAILABLE = True
 except ImportError:
     ADK_AVAILABLE = False
 
@@ -63,7 +58,7 @@ class MockInMemoryRunner:
             self.sessions[key] = []
         self.sessions[key].append({"role": "user", "content": new_message})
 
-        # Yield a mock response illustrating what Gemini would generate
+        # Yield a mock response illustrating what the model would generate
         yield MockEvent("Analyzing customer request and determining category...", "thought")
         await asyncio.sleep(0.3)
 
@@ -108,15 +103,8 @@ def create_customer_support_agent():
     """
 
     if ADK_AVAILABLE:
-        # Use local Ollama on Mac Mini with Gemma 4 E4B by default
-        ollama_host = os.getenv("OLLAMA_HOST", "http://chips-mac-mini.local:11434")
-        ollama_model = os.getenv("OLLAMA_MODEL", "ollama/gemma4:e4b")
-        print(f"[Mode] Live Google ADK with Ollama ({ollama_model} @ {ollama_host})")
-
-        model_backend = LiteLlm(
-            model=ollama_model,
-            api_base=ollama_host
-        )
+        print(f"[Mode] Live Google ADK with Ollama ({model_description()})")
+        model_backend = create_model()
 
         agent = Agent(
             name="cloudscale_support_agent",
@@ -127,10 +115,10 @@ def create_customer_support_agent():
         return runner
 
     else:
-        print("[Notice] google-adk not installed; using built-in Simulation Mode.")
+        print("[Notice] google-adk or litellm not installed; using built-in Simulation Mode.")
         agent = MockAgent(
             name="cloudscale_support_agent",
-            model="gemma4:e4b",
+            model=model_settings()[0],
             instruction=instructions
         )
         runner = MockInMemoryRunner(agent=agent, app_name="cloudscale_support")
@@ -180,6 +168,9 @@ async def main():
                 if not ADK_AVAILABLE:
                     print("[Notice] Image analysis requires live ADK; skipping this turn in simulation mode.")
                     continue
+                if not image_path.is_file():
+                    print("[Notice] Saved camera image is missing; skipping this optional image turn.")
+                    continue
 
             if ADK_AVAILABLE:
                 parts = [types.Part.from_text(text=user_input)]
@@ -218,10 +209,9 @@ async def main():
             if ADK_AVAILABLE:
                 print()
     except Exception as e:
-        if "RESOURCE_EXHAUSTED" in str(e) or "429" in str(e):
-            print(f"\n⚠️ [Notice] Gemini Free Tier rate limit reached (5 requests/min). Displaying simulated responses.")
-        else:
-            raise e
+        if getattr(e, "status_code", None) == 429:
+            print(f"\n⚠️ [Notice] Model provider rate limit reached; try again later.")
+        raise
 
 
 

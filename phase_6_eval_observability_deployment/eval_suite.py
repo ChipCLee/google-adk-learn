@@ -6,8 +6,14 @@ Demonstrates:
   - Computing quantitative evaluation metrics
 """
 
+import asyncio
+import sys
 import time
+from pathlib import Path
 from typing import List, Dict, Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from llm_config import ADK_AVAILABLE, ask_agent, model_description
 
 
 # Benchmark Golden Dataset
@@ -76,8 +82,60 @@ def run_contract_auditor_agent(contract_text: str) -> Dict[str, Any]:
     }
 
 
-def evaluate_agent():
+def verify_governing_law(contract_text: str) -> dict:
+    """Check whether the sample contract states Delaware governing law.
+
+    Args:
+        contract_text: The supplied sample contract text.
+    """
+    if "delaware" in contract_text.lower():
+        return {"status": "APPROVED", "commentary": "Delaware governing law is present; approved and compliant with this demo's policy."}
+    return {"status": "FLAGGED", "commentary": "Missing jurisdiction clause; flagged for review."}
+
+
+def check_liability_cap(contract_text: str) -> dict:
+    """Check the sample contract for uncapped liability.
+
+    Args:
+        contract_text: The supplied sample contract text.
+    """
+    if "uncapped" in contract_text.lower():
+        return {"status": "REJECTED", "commentary": "Uncapped liability; rejected under this demo's policy."}
+    return {"status": "INCONCLUSIVE", "commentary": "Requires further review."}
+
+
+async def run_live_contract_auditor(contract_text: str) -> dict:
+    from pydantic import BaseModel
+
+    class Verdict(BaseModel):
+        status: str
+        commentary: str
+
+    start = time.perf_counter()
+    result = await ask_agent(
+        name="contract_auditor",
+        instruction=(
+            "Evaluate this fictional sample against the demo policy. Use "
+            "check_liability_cap for indemnification/liability questions; otherwise "
+            "use verify_governing_law. You must call the appropriate tool. "
+            "Report its status and explain its findings, retaining relevant terms."
+        ),
+        prompt=contract_text,
+        tools=[verify_governing_law, check_liability_cap], output_schema=Verdict,
+    )
+    verdict = Verdict.model_validate_json(result["text"]).model_dump()
+    return {
+        **verdict,
+        "called_tool": result["tool_calls"][0] if result["tool_calls"] else "",
+        "latency_ms": round((time.perf_counter() - start) * 1000, 1),
+        "tokens_used": result["tokens_used"],
+    }
+
+
+async def evaluate_agent():
     print("=" * 75)
+    print(f"[Mode] Live Ollama evaluation ({model_description()})"
+          if ADK_AVAILABLE else "[Mode] Offline evaluation simulation")
     print("Phase 6: Automated Agent Evaluation Benchmark Runner")
     print("=" * 75)
 
@@ -87,7 +145,10 @@ def evaluate_agent():
 
     for case in BENCHMARK_CASES:
         print(f"\nEvaluating {case['id']}: \"{case['description']}\"")
-        output = run_contract_auditor_agent(case["input_contract"])
+        output = (
+            await run_live_contract_auditor(case["input_contract"])
+            if ADK_AVAILABLE else run_contract_auditor_agent(case["input_contract"])
+        )
 
         # Metric 1: Tool Call Accuracy
         tool_match = output["called_tool"] == case["expected_tool"]
@@ -130,9 +191,9 @@ def evaluate_agent():
     print(f"Passed:                {passed_cases}/{total_cases} ({accuracy_pct}%)")
     print(f"Average Rubric Score:  {avg_score} / 5.0")
     print(f"Average Latency:       {avg_latency} ms")
-    print(f"Benchmark Status:      {'PASSED (Ready for Production)' if accuracy_pct == 100.0 else 'NEEDS IMPROVEMENT'}")
+    print(f"Benchmark Status:      {'PASSED (demo cases only)' if accuracy_pct == 100.0 else 'NEEDS IMPROVEMENT'}")
     print("=" * 75)
 
 
 if __name__ == "__main__":
-    evaluate_agent()
+    asyncio.run(evaluate_agent())
