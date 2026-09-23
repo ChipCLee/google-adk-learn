@@ -202,26 +202,42 @@ async def main():
     print("Phase 4: Autonomous Multi-Agent Software Engineering Team")
     print("=" * 70)
 
-    request = "Build a secure user authentication system with JWT tokens and a login UI."
-    if ADK_AVAILABLE:
-        print(f"[Mode] Live Google ADK with Ollama ({model_description()})")
-        runner = InMemoryRunner(agent=build_adk_agent_hierarchy(), app_name="software_team")
-        user_id, session_id = "developer", "software_team_001"
-        await runner.session_service.create_session(
-            app_name="software_team", user_id=user_id, session_id=session_id,
-        )
-        result = await run_agent_turn(
-            runner, user_id=user_id, session_id=session_id,
-            prompt=request + " Keep each specialist's contribution brief; produce a design, not a full codebase.",
-        )
-        print(result["text"])
-    else:
-        print("[Mode] Simulation Mode (google-adk or litellm not installed)")
-        coordinator = LeadArchitectCoordinator()
-        await coordinator.handle_feature_request(request)
+    runner = create_software_team()
+    user_id = "user_lead_architect_01"
+    session_id = "session_feature_sprint_01"
 
-    print("\n" + "=" * 70)
-    print("Phase 4 Multi-Agent Demo Complete.")
+    await runner.session_service.create_session(
+        user_id=user_id,
+        session_id=session_id,
+        app_name="software_team_app"
+    )
+
+    feature_request = "Build a secure user authentication system with JWT tokens, a login UI, and automated security tests."
+    print(f"\n📋 [Feature Request]: \"{feature_request}\"")
+    print("\n🚀 [Lead Architect] Mobilizing specialized sub-agents...\n")
+
+    msg = types.Content(role="user", parts=[types.Part.from_text(text=feature_request)])
+
+    async for event in runner.run_async(user_id=user_id, session_id=session_id, new_message=msg):
+        if hasattr(event, "content") and event.content:
+            for part in getattr(event.content, "parts", []):
+                # Sub-agent tool delegation event
+                if getattr(part, "function_call", None):
+                    call = part.function_call
+                    subtask = call.args.get("request", call.args) if isinstance(call.args, dict) else call.args
+                    print(f"\n⚙️  [Lead Architect] Delegating to Sub-Agent: '{call.name}'")
+                    print(f"    📋 Decomposed Sub-Task: \"{subtask}\"")
+                # Sub-agent response output
+                elif getattr(part, "function_response", None):
+                    res = part.function_response
+                    print(f"📥 [Deliverable Received] from '{res.name}'")
+                # Synthesized or verbal agent text
+                elif getattr(part, "text", None) and not getattr(part, "thought", False):
+                    author = getattr(event, "author", "Agent")
+                    print(f"\n🗣️  [{author}]:\n{part.text.strip()}\n")
+
+    print("=" * 70)
+    print("Phase 4 Autonomous Multi-Agent Team Demo Complete.")
     print("=" * 70)
 
 
